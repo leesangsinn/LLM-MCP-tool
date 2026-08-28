@@ -1,0 +1,29 @@
+# Nhật ký phát triển (Development Changelog)
+Dự án: SketchUp CNC Controller (MCP Server)
+
+## [2026-08-27] Khởi tạo dự án MCP Server
+- Khởi tạo cấu trúc thư mục dự án `sketchup_mcp`.
+- Tạo file `requirements.txt` và cấu hình thư viện `mcp`.
+- Hỗ trợ tạo môi trường ảo (venv) và cài đặt các dependencies cần thiết.
+- Viết mã nguồn nền tảng cho MCP Server tại `src/server.py` và khai báo package tại `src/__init__.py`.
+- Khắc phục lỗi tương thích chuẩn MCP v2 (chuyển đổi từ `FastMCP` sang `MCPServer`).
+- Khai báo thành công 1 Tool mẫu có tên `clear_workspace` (sử dụng decorator `@mcp.tool()`), hiện đang chạy ở chế độ giả lập (Mock).
+- Hướng dẫn và kiểm thử thành công bằng công cụ MCP Inspector qua giao diện Web.
+
+Trạng thái hiện tại: Đã triển khai TCP Socket Client trong `send_ruby_command`.
+- [x] Đã cấu hình kết nối TCP `localhost:8080`, timeout 5 giây, encode UTF-8.
+- [x] Bắt các ngoại lệ `ConnectionRefusedError`, `socket.timeout`, `Exception` đầy đủ.
+- [x] Sửa payload `clear_workspace` thành `"Sketchup.active_model.entities.clear!; 'Workspace Cleared'"`.
+- [x] Đã bổ sung Tool `draw_cnc_part` hỗ trợ vẽ linh kiện 3D cho CNC.
+   - Các tham số đầu vào: `part_name`, `width`, `depth`, `thickness`, `pos_x`, `pos_y`, `pos_z`.
+   - Sinh script Ruby tự động tạo Component, đặt tên và vẽ theo kích thước chuẩn (mm).
+   - Có cơ chế `begin...rescue` để bắt lỗi khi thực thi trong SketchUp API.
+
+- [x] Đã bổ sung Macro Tool `draw_basic_cabinet` để tự động dựng nguyên một hộc tủ cơ bản (Trái, Phải, Đáy, Nóc, Hậu) qua một lần gọi duy nhất.
+   - Tránh rủi ro LLM tính toán sai tọa độ 3D.
+   - Các tấm ván tự động khấu trừ độ dày (thickness) và chèn vào vị trí chính xác.
+   - Gom nhóm tất cả vào một transaction `model.start_operation` duy nhất.
+
+Sẵn sàng cho các công việc tiếp theo (như viết logic Server TCP bên phía SketchUp/Ruby).
+
+
