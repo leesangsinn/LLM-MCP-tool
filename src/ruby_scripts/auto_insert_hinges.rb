@@ -22,9 +22,11 @@ end
 def get_or_create_cup_template(model)
   def_name = "_ABF_hingeCup"
   d = model.definitions[def_name]
+  return d if d && d.entities.length > 0 # Tôn trọng và giữ nguyên Component gốc của ABF
+  
   d = model.definitions.add(def_name) if d.nil?
   d.entities.clear!
-  # Lỗ Cup 35mm
+  # Lỗ Cup 35mm (Fallback nếu chưa có ABF)
   d.entities.add_circle(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 0, 1), 17.5.mm)
   # 2 lỗ bắt vít của Cup (cách nhau 48mm)
   d.entities.add_circle(Geom::Point3d.new(0, 24.mm, 0), Geom::Vector3d.new(0, 0, 1), 2.5.mm)
@@ -35,6 +37,8 @@ end
 def get_or_create_plate_template(model)
   def_name = "_ABF_hingeMountingPlate"
   d = model.definitions[def_name]
+  return d if d && d.entities.length > 0 # Tôn trọng ABF
+
   d = model.definitions.add(def_name) if d.nil?
   d.entities.clear!
   # Đế bản lề chỉ có 2 lỗ vít (cách nhau 32mm)

@@ -18,15 +18,13 @@ def cleanup_old_hardware_minifix(ents)
 end
 
 def get_or_create_cam_template(model, draw_cam)
-  if draw_cam
-    def_name = "_ABF_minifixPlasticBase"
-  else
-    def_name = "_ABF_shelfSupport_D5"
-  end
+  def_name = draw_cam ? "_ABF_minifixPlasticBase" : "_ABF_shelfSupport_D5"
   
   d = model.definitions[def_name]
+  return d if d && d.entities.length > 0 # Sử dụng Component chuẩn của ABF có sẵn
+
   d = model.definitions.add(def_name) if d.nil?
-  d.entities.clear!
+  d.entities.clear! # Fallback tự vẽ nếu chưa từng dùng ABF
   
   if draw_cam
     # 1. Lỗ chốt đâm vách (Pin D5)
@@ -35,7 +33,6 @@ def get_or_create_cam_template(model, draw_cam)
     d.entities.add_circle(Geom::Point3d.new(0, 0, -34.mm), Geom::Vector3d.new(0, 1, 0), 7.5.mm)
   else
     # Nếu là Chốt đợt (Shelf pin)
-    # Chỉ vẽ 1 vòng tròn 5mm ngay tại gốc tọa độ, mặt phẳng XY (Z=0)
     d.entities.add_circle(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 0, 1), 2.5.mm)
   end
   d
@@ -46,6 +43,7 @@ begin
   entities = model.entities
   
   minifix_distance = {{minifix_distance}}.mm
+  d5_z_offset = {{d5_z_offset}}.mm
   face_z_idx = {{face_z_idx}}
   cam_y_dir = {{cam_y_dir}}
   draw_cam = {{draw_cam}}
@@ -60,8 +58,8 @@ begin
   templates = {}
   templates[:cam] = get_or_create_cam_template(model, draw_cam)
 
-  hw_group = active_ents.add_group
-  hw_group.name = draw_cam ? "Phu_Kien_Cam_Chot" : "Phu_Kien_Chot_Dot"
+  shelf_hardware_map = {}
+  panel_hardware_map = {}
 
   groups_and_comps = active_ents.grep(Sketchup::Group) + active_ents.grep(Sketchup::ComponentInstance)
   shelves, vertical_panels = [], []
@@ -71,8 +69,14 @@ begin
     dx, dy, dz = bounds.width.to_mm, bounds.height.to_mm, bounds.depth.to_mm
     
     if dz > 16 && dz < 19
-      ent.make_unique if ent.respond_to?(:make_unique)
-      shelves << ent
+      name = ent.respond_to?(:name) ? ent.name.downcase : ""
+      is_top_or_bottom = name.include?("noc") || name.include?("day") || name.include?("top") || name.include?("bottom")
+      
+      # Không gắn chốt D5 vào nóc/đáy
+      unless !draw_cam && is_top_or_bottom
+        ent.make_unique if ent.respond_to?(:make_unique)
+        shelves << ent
+      end
     elsif dx > 16 && dx < 19
       ent.make_unique if ent.respond_to?(:make_unique)
       vertical_panels << ent
@@ -95,7 +99,7 @@ begin
         gap = (shelf_edge_x - panel_inner_x).abs
         
         if gap < 3.mm
-          depth_y = s_bounds.depth
+          depth_y = s_bounds.height
           start_y = s_bounds.corner(0).y
           
           cam_x = panel_inner_x
@@ -115,30 +119,50 @@ begin
               c_tr = Geom::Transformation.axes(c_origin, cam_x_vec, cam_y_vec, cam_z_vec)
               
               local_c_tr = edit_tr_inv * c_tr
-              inst = hw_group.entities.add_instance(templates[:cam], local_c_tr)
+              inst = active_ents.add_instance(templates[:cam], local_c_tr)
               inst.name = "_ABF_minifixPlasticBase"
+              shelf_hardware_map[shelf] ||= []
+              shelf_hardware_map[shelf] << inst
               count += 1
             end
           else
-            # CHỐT ĐỢT D5 (Không nhúng vào vách nữa, thả thẳng ra ngoài)
-            # Origin nằm ngay trên mặt vách.
-            # Z axis của component đâm SÂU vào trong vách để ABF đục lỗ.
+            # CHỐT ĐỢT D5
             pin_z_vec = is_left_panel ? Geom::Vector3d.new(-1, 0, 0) : Geom::Vector3d.new(1, 0, 0)
             pin_y_vec = Geom::Vector3d.new(0, 0, 1) # Hướng lên trên
             pin_x_vec = pin_y_vec * pin_z_vec
             
             y_points.each do |py|
-              p_origin = Geom::Point3d.new(cam_x, py, s_bounds.corner(0).z)
+              # D5 pin cần lùi xuống một đoạn d5_z_offset (mặc định 2.5mm) để kê đợt
+              # Sử dụng cam_z để tôn trọng tham số minifix_face (top/bottom)
+              p_origin = Geom::Point3d.new(cam_x, py, cam_z - d5_z_offset)
               p_tr = Geom::Transformation.axes(p_origin, pin_x_vec, pin_y_vec, pin_z_vec)
               
               local_p_tr = edit_tr_inv * p_tr
-              inst = hw_group.entities.add_instance(templates[:cam], local_p_tr)
+              inst = active_ents.add_instance(templates[:cam], local_p_tr)
               inst.name = "_ABF_shelfSupport_D5"
+              panel_hardware_map[v_panel] ||= []
+              panel_hardware_map[v_panel] << inst
               count += 1
             end
           end
         end
       end
+    end
+  end
+
+  shelf_hardware_map.each do |shelf, hardware|
+    if hardware.any?
+      grp = active_ents.add_group([shelf] + hardware)
+      original_name = shelf.respond_to?(:name) && !shelf.name.empty? ? shelf.name : shelf.definition.name
+      grp.name = original_name
+    end
+  end
+
+  panel_hardware_map.each do |v_panel, hardware|
+    if hardware.any?
+      grp = active_ents.add_group([v_panel] + hardware)
+      original_name = v_panel.respond_to?(:name) && !v_panel.name.empty? ? v_panel.name : v_panel.definition.name
+      grp.name = original_name
     end
   end
 
