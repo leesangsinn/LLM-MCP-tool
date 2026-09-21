@@ -1,5 +1,7 @@
 from src.utils.sketchup_client import send_ruby_command, load_ruby_script
 from mcp.server.mcpserver import MCPServer
+import json
+from src.utils.cabinet_math import CabinetCalculator
 
 def register_drawing_tools(mcp: MCPServer):
     @mcp.tool()
@@ -33,4 +35,25 @@ def register_drawing_tools(mcp: MCPServer):
                        .replace('{{pos_x}}', str(pos_x))\
                        .replace('{{pos_y}}', str(pos_y))\
                        .replace('{{pos_z}}', str(pos_z))
+        return send_ruby_command(script.strip())
+
+    @mcp.tool()
+    def draw_smart_cabinet(layout_json: str) -> str:
+        """
+        Takes a JSON layout definition, calculates absolute math using CabinetCalculator,
+        and generates the full cabinet assembly in SketchUp via Ruby.
+        """
+        try:
+            layout_data = json.loads(layout_json)
+        except json.JSONDecodeError as e:
+            return f"Error: Invalid JSON - {str(e)}"
+            
+        calculator = CabinetCalculator(layout_data)
+        parts_list = calculator.generate_parts()
+        
+        # Serialize back to tight JSON for Ruby
+        parts_json = json.dumps(parts_list)
+        
+        script = load_ruby_script('draw_smart_assembly')
+        script = script.replace('{{parts_json}}', parts_json)
         return send_ruby_command(script.strip())
