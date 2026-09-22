@@ -28,9 +28,9 @@ def get_or_create_cup_template(model)
   d.entities.clear!
   # Lỗ Cup 35mm (Fallback nếu chưa có ABF)
   d.entities.add_circle(Geom::Point3d.new(0, 0, 0), Geom::Vector3d.new(0, 0, 1), 17.5.mm)
-  # 2 lỗ bắt vít của Cup (cách nhau 48mm)
-  d.entities.add_circle(Geom::Point3d.new(0, 24.mm, 0), Geom::Vector3d.new(0, 0, 1), 2.5.mm)
-  d.entities.add_circle(Geom::Point3d.new(0, -24.mm, 0), Geom::Vector3d.new(0, 0, 1), 2.5.mm)
+  # 2 lỗ bắt vít của Cup: Lệch X 7.mm (để khoảng cách đến mép là 21 + 7 = 28mm)
+  d.entities.add_circle(Geom::Point3d.new(7.mm, 24.mm, 0), Geom::Vector3d.new(0, 0, 1), 1.mm)
+  d.entities.add_circle(Geom::Point3d.new(7.mm, -24.mm, 0), Geom::Vector3d.new(0, 0, 1), 1.mm)
   d
 end
 
@@ -41,9 +41,9 @@ def get_or_create_plate_template(model)
 
   d = model.definitions.add(def_name) if d.nil?
   d.entities.clear!
-  # Đế bản lề chỉ có 2 lỗ vít (cách nhau 32mm)
-  d.entities.add_circle(Geom::Point3d.new(0, 16.mm, 0), Geom::Vector3d.new(0, 0, 1), 2.5.mm)
-  d.entities.add_circle(Geom::Point3d.new(0, -16.mm, 0), Geom::Vector3d.new(0, 0, 1), 2.5.mm)
+  # Đế bản lề: Lỗ mồi R=1.mm (đường kính 2mm), cách nhau 32mm
+  d.entities.add_circle(Geom::Point3d.new(0, 16.mm, 0), Geom::Vector3d.new(0, 0, 1), 1.mm)
+  d.entities.add_circle(Geom::Point3d.new(0, -16.mm, 0), Geom::Vector3d.new(0, 0, 1), 1.mm)
   d
 end
 
@@ -57,6 +57,7 @@ begin
 
   cleanup_old_hardware(active_ents)
 
+  templates = {}
   templates[:cup] = get_or_create_cup_template(model)
   templates[:plate] = get_or_create_plate_template(model)
 
@@ -68,6 +69,7 @@ begin
   # Lấy tất cả Group/Component trong model (quét toàn bộ)
   groups_and_comps = active_ents.grep(Sketchup::Group) + active_ents.grep(Sketchup::ComponentInstance)
   vertical_panels, doors = [], []
+  blocked_zones = [] # Thu thập "Vùng cấm" từ các đợt ngang
 
   groups_and_comps.each do |ent|
     bounds = ent.bounds
@@ -78,39 +80,85 @@ begin
       ent.make_unique if ent.respond_to?(:make_unique)
       vertical_panels << ent
     elsif dy > 16 && dy < 20
-      unless name.include?("hau") || name.include?("back") || bounds.center.y > 200.mm || name.include?("keo") || name.include?("drawer") || name.include?("nk") || dz < 300
+      unless name.include?("hau") || name.include?("back") || name.include?("keo") || name.include?("drawer") || name.include?("nk") || dz < 300
         ent.make_unique if ent.respond_to?(:make_unique)
         doors << ent
       end
+    elsif dz < 25 && dx > 50 && dy > 50
+      # Nhận diện đợt ngang: Mỏng ở trục Z, rộng ở X và Y
+      blocked_zones << { min_z: bounds.min.z - 25.mm, max_z: bounds.max.z + 25.mm }
     end
   end
-  # 4. Quét Bản lề và Clone (Dùng khe hở thay vì intersect)
-  doors.each do |door|
-    vertical_panels.each do |v_panel|
-      d_bounds = door.bounds
-      v_bounds = v_panel.bounds
-      
-      is_left_hinge = (v_bounds.center.x < d_bounds.center.x)
-      
-      door_edge_x = is_left_hinge ? d_bounds.corner(0).x : d_bounds.corner(1).x
-      panel_inner_x = is_left_hinge ? v_bounds.corner(1).x : v_bounds.corner(0).x
-      panel_outer_x = is_left_hinge ? v_bounds.corner(0).x : v_bounds.corner(1).x
 
-      gap_inset = (door_edge_x - panel_inner_x).abs
-      gap_overlay = (door_edge_x - panel_outer_x).abs
+  # Thuật toán ghép cặp ưu tiên (Priority Pairing)
+  if vertical_panels.any?
+    min_x_panel = vertical_panels.map { |p| p.bounds.center.x }.min
+    max_x_panel = vertical_panels.map { |p| p.bounds.center.x }.max
+    cabinet_center_x = (min_x_panel + max_x_panel) / 2.0
 
-      if gap_inset < 3.mm || gap_overlay < 3.mm
+    doors.each do |door|
+      candidate_panels = []
+      
+      vertical_panels.each do |v_panel|
+        d_bounds = door.bounds
+        v_bounds = v_panel.bounds
+        
+        is_left_hinge = (v_bounds.center.x < d_bounds.center.x)
+        
+        door_edge_x = is_left_hinge ? d_bounds.corner(0).x : d_bounds.corner(1).x
+        panel_inner_x = is_left_hinge ? v_bounds.corner(1).x : v_bounds.corner(0).x
+        panel_outer_x = is_left_hinge ? v_bounds.corner(0).x : v_bounds.corner(1).x
+
+        gap_inset = (door_edge_x - panel_inner_x).abs
+        gap_overlay = (door_edge_x - panel_outer_x).abs
+
+        if gap_inset < 3.mm || gap_overlay < 3.mm
+          candidate_panels << {
+            panel: v_panel, 
+            x: v_bounds.center.x, 
+            is_left: is_left_hinge, 
+            door_edge_x: door_edge_x, 
+            panel_inner_x: panel_inner_x
+          }
+        end
+      end
+
+      if candidate_panels.any?
+        is_left_side = door.bounds.center.x < cabinet_center_x
+        
+        best_candidate = if is_left_side
+                           candidate_panels.min_by { |c| c[:x] }
+                         else
+                           candidate_panels.max_by { |c| c[:x] }
+                         end
+                         
+        v_panel = best_candidate[:panel]
+        is_left_hinge = best_candidate[:is_left]
+        door_edge_x = best_candidate[:door_edge_x]
+        panel_inner_x = best_candidate[:panel_inner_x]
+        
+        d_bounds = door.bounds
+        v_bounds = v_panel.bounds
+        
         door_height = d_bounds.depth
         start_z = d_bounds.corner(0).z
         
-        # Tọa độ Y của Cup: Lùi vào từ mép ngoài cánh một khoảng bằng đúng độ dày cánh
-        cup_y = d_bounds.corner(0).y + d_bounds.height
-        
-        # Tọa độ Y của Plate: Luôn cách mép trước của vách (front edge) đúng 37mm theo chuẩn
-        plate_y = v_bounds.corner(0).y + 37.mm 
+        # Xác định hướng đâm vào lòng tủ dọc theo trục Y (1 là +Y, -1 là -Y) (Relative Geometry)
+        inward_vector_y = v_bounds.center.y - d_bounds.center.y
+        inward_dir = inward_vector_y > 0 ? 1 : -1
 
-        # Tọa độ X:
-        cup_x = is_left_hinge ? (door_edge_x + 22.mm) : (door_edge_x - 22.mm)
+        # Chuẩn Bản Lề A (Cánh Phủ)
+        # Mép trước vách hồi
+        panel_front_y = inward_dir > 0 ? v_bounds.min.y : v_bounds.max.y
+        # Đế bản lề cách mép vách hồi đúng 37mm
+        plate_y = panel_front_y + (37.mm * inward_dir)
+
+        # Mặt trong cánh tủ
+        door_inner_y = inward_dir > 0 ? d_bounds.max.y : d_bounds.min.y
+        cup_y = door_inner_y
+
+        # Tâm cối bản lề cách mép viền cánh 21mm
+        cup_x = is_left_hinge ? (door_edge_x + 21.mm) : (door_edge_x - 21.mm)
         plate_x = panel_inner_x
         
         h_mm = door_height.to_mm
@@ -127,17 +175,47 @@ begin
           z_points << start_z + 100.mm + (2.0 * space)
         end
         
-        # Cup:
-        cup_z_vec = Geom::Vector3d.new(0, 1, 0) # Đâm vào thịt cánh
-        cup_y_vec = Geom::Vector3d.new(0, 0, 1) # Hướng lên trời (Lỗ vít dọc)
-        cup_x_vec = cup_y_vec * cup_z_vec # (-1, 0, 0)
+        # Shelf Collision Avoidance - Quét vùng cấm & Tịnh tiến hệ lỗ 32
+        safe_z_points = []
+        door_max_z = d_bounds.max.z
+        
+        z_points.each do |z|
+          current_z = z
+          collision_detected = true
+          
+          while collision_detected
+            collision_detected = false
+            blocked_zones.each do |zone|
+              if current_z > zone[:min_z] && current_z < zone[:max_z]
+                new_z = current_z + 32.mm
+                # Guardrail chặn lặp vô tận
+                if new_z > door_max_z - 50.mm
+                  puts "Warning: Bản lề tịnh tiến vượt quá đỉnh cánh tủ (Z=#{new_z.to_mm}mm). Hủy tịnh tiến để tránh lỗi vòng lặp."
+                  collision_detected = false
+                  break
+                else
+                  current_z = new_z
+                  collision_detected = true
+                  break # Thoát để check lại từ đầu với tọa độ current_z mới
+                end
+              end
+            end
+          end
+          safe_z_points << current_z
+        end
+        
+        # Định hướng Vector
+        # Cup: Đâm ngược từ mặt trong vào thịt cánh tủ
+        cup_z_vec = Geom::Vector3d.new(0, -inward_dir, 0)
+        cup_y_vec = Geom::Vector3d.new(0, 0, 1)
+        cup_x_vec = cup_y_vec * cup_z_vec
 
-        # Plate:
-        plate_z_vec = is_left_hinge ? Geom::Vector3d.new(-1, 0, 0) : Geom::Vector3d.new(1, 0, 0) # Đâm vào vách hồi
-        plate_y_vec = Geom::Vector3d.new(0, 0, 1) # Hướng lên trời (Lỗ vít dọc)
+        # Plate: Đâm thẳng vào vách hồi
+        plate_z_vec = is_left_hinge ? Geom::Vector3d.new(-1, 0, 0) : Geom::Vector3d.new(1, 0, 0)
+        plate_y_vec = Geom::Vector3d.new(0, 0, 1)
         plate_x_vec = plate_y_vec * plate_z_vec
 
-        z_points.each do |hz|
+        safe_z_points.each do |hz|
           # Gắn Cup
           if templates[:cup]
             c_origin = Geom::Point3d.new(cup_x, cup_y, hz)

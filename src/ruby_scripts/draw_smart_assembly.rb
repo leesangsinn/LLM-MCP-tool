@@ -41,9 +41,9 @@ begin
       face.pushpull(-h_mm.mm) 
       
       # Tạo Component
-      comp_def = group.to_component
-      comp_def.name = name
-      comp_inst = comp_def.instances.first
+      comp_inst = group.to_component
+      comp_inst.definition.name = name
+      comp_inst.name = name
       
       # Gán vật liệu
       comp_inst.material = mdf_mat
