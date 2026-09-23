@@ -64,13 +64,16 @@ begin
   groups_and_comps = active_ents.grep(Sketchup::Group) + active_ents.grep(Sketchup::ComponentInstance)
   shelves, vertical_panels = [], []
 
+  # Lấy Z tuyệt đối để xác định Nóc và Đáy
+  min_z = groups_and_comps.map { |e| e.bounds.min.z }.min
+  max_z = groups_and_comps.map { |e| e.bounds.max.z }.max
+
   groups_and_comps.each do |ent|
     bounds = ent.bounds
     dx, dy, dz = bounds.width.to_mm, bounds.height.to_mm, bounds.depth.to_mm
     
     if dz > 16 && dz < 19
-      name = ent.respond_to?(:name) ? ent.name.downcase : ""
-      is_top_or_bottom = name.include?("noc") || name.include?("day") || name.include?("top") || name.include?("bottom")
+      is_top_or_bottom = (bounds.max.z > max_z - 120.mm) || (bounds.min.z < min_z + 120.mm)
       
       # Không gắn chốt D5 vào nóc/đáy
       unless !draw_cam && is_top_or_bottom
@@ -98,7 +101,7 @@ begin
         
         gap = (shelf_edge_x - panel_inner_x).abs
         
-        if gap < 3.mm
+        if gap < 5.mm
           depth_y = s_bounds.height
           start_y = s_bounds.corner(0).y
           
