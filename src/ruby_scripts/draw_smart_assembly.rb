@@ -1,5 +1,34 @@
 require 'json'
 
+def insert_dynamic_drawer(ents, path, px, py, pz, w, d, h)
+  model = Sketchup.active_model
+  def_name = File.basename(path, ".*") # Tự động lấy tên "HocKeo" từ file
+  
+  comp_def = model.definitions[def_name]
+  unless comp_def
+    if File.exist?(path)
+      comp_def = model.definitions.load(path)
+    else
+      raise "Không tìm thấy thư viện tại #{path}"
+    end
+  end
+  
+  tr = Geom::Transformation.translation(Geom::Vector3d.new(px.mm, py.mm, pz.mm))
+  instance = ents.add_instance(comp_def, tr)
+  
+  # Bơm thông số lọt lòng cho DC (Tính toán theo mm)
+  instance.set_attribute('dynamic_attributes', 'lenx', w.to_f)
+  instance.set_attribute('dynamic_attributes', 'leny', d.to_f)
+  instance.set_attribute('dynamic_attributes', 'lenz', h.to_f)
+  
+  # Kích hoạt Redraw để DC tự động trừ khe hở ray, độ dày ván
+  if defined?($dc_observers)
+    $dc_observers.get_latest_class.redraw_with_undo(instance)
+  end
+  
+  return instance
+end
+
 begin
   model = Sketchup.active_model
   model.start_operation("Draw Smart Cabinet", true)
@@ -21,9 +50,9 @@ begin
     w_mm = part["w"].to_f
     d_mm = part["d"].to_f
     h_mm = part["h"].to_f
-    x = part["x"].to_f.mm
-    y = part["y"].to_f.mm
-    z = part["z"].to_f.mm
+    x = part["x"].to_f
+    y = part["y"].to_f
+    z = part["z"].to_f
     mat_name = part["material"]
 
     if type == "panel"
@@ -49,33 +78,12 @@ begin
       comp_inst.material = mdf_mat
       
       # Dời về đúng tọa độ X, Y, Z
-      t = Geom::Transformation.translation(Geom::Vector3d.new(x, y, z))
+      t = Geom::Transformation.translation(Geom::Vector3d.new(x.mm, y.mm, z.mm))
       comp_inst.transform!(t)
       
     elsif type == "drawer"
-      # Chèn hộc kéo
-      comp_def = model.definitions["Hoc_Keo"]
-      unless comp_def
-        # Load từ file
-        path = "C:/Users/dinhq/Downloads/THU VIEN DC 17.5mm/HocKeo.skp"
-        if File.exist?(path)
-          comp_def = model.definitions.load(path)
-        else
-          raise "Không tìm thấy thư viện HocKeo.skp tại #{path}"
-        end
-      end
-      
-      t = Geom::Transformation.translation(Geom::Vector3d.new(x, y, z))
-      comp_inst = model.active_entities.add_instance(comp_def, t)
-      
-      # Truyền Dynamic Attributes (Tùy thuộc vào cấu trúc của HocKeo.skp)
-      comp_inst.set_attribute("dynamic_attributes", "lenx", w_mm.to_f)
-      comp_inst.set_attribute("dynamic_attributes", "leny", d_mm.to_f)
-      comp_inst.set_attribute("dynamic_attributes", "lenz", h_mm.to_f)
-      $dc_observers.get_latest_class.redraw_with_undo(comp_inst) if defined?($dc_observers)
-      
-      # Gán vật liệu
-      comp_inst.material = mdf_mat
+      path = "C:/Users/dinhq/Downloads/THU VIEN DC 17.5mm/HocKeo.skp"
+      insert_dynamic_drawer(model.active_entities, path, x, y, z, w_mm, d_mm, h_mm)
     end
   end
 

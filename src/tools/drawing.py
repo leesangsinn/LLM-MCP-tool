@@ -57,3 +57,24 @@ def register_drawing_tools(mcp: MCPServer):
         script = load_ruby_script('draw_smart_assembly')
         script = script.replace('{{parts_json}}', parts_json)
         return send_ruby_command(script.strip())
+
+    @mcp.tool()
+    def insert_component_from_registry(
+        component_id: str, pos_x: float, pos_y: float, pos_z: float,
+        target_width: float, target_height: float, target_depth: float, color_hex: str = ""
+    ) -> str:
+        """
+        Inserts a dynamic component (like a drawer) from a predefined registry.
+        Automatically handles dynamic attributes and avoids hard-coded caching issues.
+        """
+        script = load_ruby_script('insert_component_from_registry')
+        script = script.replace('{{component_id}}', component_id)\
+                       .replace('{{pos_x}}', str(pos_x))\
+                       .replace('{{pos_y}}', str(pos_y))\
+                       .replace('{{pos_z}}', str(pos_z))\
+                       .replace('{{target_width}}', str(target_width))\
+                       .replace('{{target_height}}', str(target_height))\
+                       .replace('{{target_depth}}', str(target_depth))\
+                       .replace('{{color_hex}}', color_hex)
+        return send_ruby_command(script.strip())
+
